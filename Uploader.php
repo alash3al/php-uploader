@@ -1,70 +1,206 @@
-### PHP Uploader
-
-Uploader is simple file(s) uploader class, that supports <br />
-single or multiple files at once . <br />
-You can configure it easily and it's full options . <br />
-
-***
-                
-### Example 1: (single file upload)
-                
-<pre>
-
-<form method="post" enctype="multipart/form-data">
-    <input name="file" type="file" />
-    <input type="submit" name="upload" value="upload" />
-</form>
 <?php
-require 'Uploader.php';
-if(isset($_POST['upload']))
+
+/**
+ * Simple Upload Class
+ * 
+ * Simple miltiple/sinlge file(s) uploader class
+ * 
+ * @package     Upload
+ * @author      <fb.com/alash3al> or <alash3al@facebook.com>
+ * @copyright   2014 Mohammed Alashaal
+ * @version     1.0
+ * @access      public
+ * @license     MIT license
+ * @filesource
+ */
+class Uploader
 {
-    $config = array
+    /** @ignore */
+    protected $errors       =   array
     (
-        'form_key'          =>  'file' // the name of input file form 
-        ,'upload_dir'       =>  session_save_path() // path to save the file in , default "php tmp"
-        ,'allowed_ext'      =>  array('png', 'jpg', 'jpeg', 'gif') // allowed extensions
-        ,'excluded_ext'     =>  array('htaccess', 'php', 'pl', 'py')   // disallowed extensions
-        ,'max_filesize'     =>  5000 // max file size default "5 mb or 5000 kb"
-        ,'override'         =>  false // override existing ?
+        1   =>  'file_exceeds_limit',
+        2   =>  'file_exceeds_form_limit',
+        3   =>  'file_partial',
+        4   =>  'no_file_selected',
+        5   =>  'ext_not_allowed',
+        6   =>  'no_tmp_dir',
+        7   =>  'cannot_write_file',
+        8   =>  'php_ext_stopped_upload',
+        9   =>  'upload_dir_error',
+        10  =>  'file_already_exists'
     );
+    /** @ignore */
+    protected $configs      =   array();
+    /** @ignore */
+    protected $file         =   null;
+    /** @ignore */
+    protected $result       =   null;
     
-    $u = new Uploader($config);
-    if($u == true) echo 'done';
-    else var_dump($u->result());
+    /**
+     * Constructor
+     * 
+     * @param array $config
+     * @return object
+     */
+    public function __construct(array $config = array())
+    {
+        $configs = array
+        (
+            'form_key'          =>  'file'
+            ,'upload_dir'       =>  session_save_path()
+            ,'allowed_ext'      =>  array('png', 'jpg', 'jpeg', 'gif')
+            ,'excluded_ext'     =>  array('htaccess', 'php', 'pl', 'py')
+            ,'max_filesize'     =>  5000
+            ,'override'         =>  false
+        );
+        
+        $this->configs = array_merge($configs, $config);
+    }
+    
+    /**
+     * start uploading
+     * 
+     * @return bool
+     */
+    function do_upload()
+    {
+        $key = $this->configs['form_key'];
+        
+        if(is_array($_FILES[$key]['name']) and (empty($_FILES[$key]['name']) or empty($_FILES[$key]['name'][0]))) {
+            $this->result = $this->errors[4];
+            return false;
+        }
+        
+        if(!isset($_FILES[$key])) {
+            $this->result = $this->errors[4];
+            return false;
+        }
+        
+        if
+        (
+            !isset($_FILES[$key]['name'])       or 
+            !isset($_FILES[$key]['error'])      or
+            !isset($_FILES[$key]['size'])       or
+            !isset($_FILES[$key]['type'])       or
+            !isset($_FILES[$key]['tmp_name'])
+        )
+        {
+            $this->result = $this->errors[4];
+            return false;
+        }
+        
+        if(!is_array($_FILES[$key]['name'])) 
+        {
+            $file = array($_FILES[$key]);
+        } 
+        elseif(is_array($_FILES[$key]['name'])) 
+        {
+            $c = count($_FILES[$key]['name']);
+            $file = array();
+            
+            for($i=0; $i<$c; ++$i) 
+            {
+                $file[] = array
+                (
+                    'name'      =>  $_FILES[$key]['name'][$i],
+                    'type'      =>  $_FILES[$key]['type'][$i],
+                    'size'      =>  $_FILES[$key]['size'][$i],
+                    'error'     =>  $_FILES[$key]['error'][$i],
+                    'tmp_name'  =>  $_FILES[$key]['tmp_name'][$i]
+                );
+            }
+        } 
+        else 
+        {
+            $this->result = $this->errors[4];
+            return false;
+        }
+        
+        $r = 0;
+        
+        
+        foreach($file as &$f)
+        {
+            $this->file = $f['name'];
+            
+            if($f['error'] > 0) 
+            {
+                $this->result[$f['name']] = $this->errors[(int)$f['error']];
+                --$r;    
+            }
+            else
+            {
+                if(((int) $f['size']/1024) > $this->configs['max_filesize'])
+                {
+                    $this->result[$f['name']] = $this->errors[1];
+                    --$r;
+                }
+                elseif(in_array($this->get_file_ext(), $this->configs['excluded_ext']))
+                {
+                    $this->result[$f['name']] = $this->errors[5];
+                    --$r;
+                }
+                elseif(!in_array($this->get_file_ext(), $this->configs['allowed_ext']))
+                {
+                    $this->result[$f['name']] = $this->errors[5];
+                    --$r;
+                }
+                elseif
+                (
+                    (
+                        file_exists($this->new_filepath()) and
+                        $this->configs['override'] == true 
+                    ) or
+                    !file_exists($this->new_filepath())
+                )
+                {
+                    if(@move_uploaded_file($f['tmp_name'], $this->new_filepath()) == true)
+                    {
+                        $this->result[$f['name']] = true;
+                        ++$r;
+                    }
+                    else
+                    {
+                        $this->result[$f['name']] = $this->errors[9];
+                        --$r;
+                    }
+                }
+                elseif(file_exists($this->new_filepath()) and $this->configs['override'] !== true)
+                {
+                    $this->result[$f['name']] = $this->errors[10];
+                    --$r;
+                } 
+                else
+                {
+                    $this->result[$f['name']] = 'unknown_error';
+                    --$r;
+                }
+            }
+        }
+        
+        if($r > 0 and count($_FILES[$key]['name']) == $r) return true;
+        elseif($r <= 0) return false;
+    }
+    
+    /** @ignore */
+    function result()
+    {
+        return (array) $this->result;
+    }
+    
+    /** @ignore */
+    protected function get_file_ext()
+    {
+        return pathinfo($this->file, PATHINFO_EXTENSION);
+    }
+    
+    /** @ignore */
+    protected function new_filepath()
+    {
+        $p = realpath($this->configs['upload_dir']);
+        
+        if(empty($p) or !$p) return false;
+        
+        return $p . DIRECTORY_SEPARATOR .  $this->filter_filename();
+    }
 }
-?>
-</pre>
-
-
-***
-
-         
-### Example 2: (multiple files upload)
-                
-<pre>
-    <form method="post" enctype="multipart/form-data">
-        <input name="file[]" type="file" />
-        <input type="submit" name="upload" value="upload" />
-    </form>
-    
-<?php
-require 'Uploader.php';
-if(isset($_POST['upload']))
-{
-    $config = array
-    (
-        'form_key'          =>  'file' // the name of input file form 
-        ,'upload_dir'       =>  session_save_path() // path to save the file in , default "php tmp"
-        ,'allowed_ext'      =>  array('png', 'jpg', 'jpeg', 'gif') // allowed extensions
-        ,'excluded_ext'     =>  array('htaccess', 'php', 'pl', 'py')   // disallowed extensions
-        ,'max_filesize'     =>  5000 // max file size default "5 mb"
-        ,'override'         =>  false // override existing ?
-    );
-    
-    $u = new Uploader($config);
-    if($u == true) echo 'done';
-    else var_dump($u->result());
-}
-
-?>
-</pre>
